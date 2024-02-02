@@ -92,6 +92,7 @@ def main():
         "-s", "--summary", action="store_true", help="Generate a summary"
     )
     parser.add_argument("--telegram", action="store_true", help="Start Telegram bot")
+    parser.add_argument("--matrix", action="store_true", help="Start Matrix bot")
     parser.add_argument("--http", action="store_true", help="Start HTTP server")
     parser.add_argument("--version", action="store_true", help="Show Wren version")
 
@@ -108,6 +109,10 @@ def main():
         start_server()
     elif args.telegram:
         from wren.telegram import start_bot
+
+    elif args.matrix:
+        from wren.matrix import start_bot
+
         start_bot()
     elif args.one:
         print_random()
