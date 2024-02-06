@@ -11,6 +11,7 @@ from wren.core import (
     get_task_file,
     get_tasks,
     mark_task_done,
+    config,
     notes_dir,
     config_file,
     data_dir,
@@ -20,14 +21,18 @@ from wren.core import (
 editor = os.environ.get("EDITOR", "vi")
 
 
-def create_file(name):
-    filename = create_new_task(name)
-    print("created task:", filename)
+def create_task(name):
+    taskname = create_new_task(name)
+    print("created task:", taskname)
 
 
 def list_files(s=""):
     tasks = get_tasks(s)
-    print("".join(map(lambda t: "➜ " + t + "\n", tasks))[:-1])
+    if "backend" in config:
+        if config["backend"] == "todoist":
+            print("".join(map(lambda t: "➜ " + t.content + "\n", tasks)))
+    else:
+        print("".join(map(lambda t: "➜ " + t + "\n", tasks))[:-1])
 
 
 def print_random():
@@ -42,9 +47,10 @@ def print_summary():
 
 def edit_content(name):
     found, filename = get_task_file(name)
-    if found:
-        filepath = os.path.join(notes_dir, filename)
-        subprocess.run([editor, filepath])
+    if "backend" not in config:
+        if found:
+            filepath = os.path.join(notes_dir, filename)
+            subprocess.run([editor, filepath])
 
 
 def read_content(name):
@@ -99,11 +105,9 @@ def main():
         print("data directory: " + data_dir)
     elif args.http:
         from wren.http_server import start_server
-
         start_server()
     elif args.telegram:
         from wren.telegram import start_bot
-
         start_bot()
     elif args.one:
         print_random()
@@ -117,7 +121,7 @@ def main():
         mark_done(args.done)
     else:
         if args.task:
-            create_file(" ".join(args.task))
+            create_task(" ".join(args.task))
         else:
             list_files()
 
