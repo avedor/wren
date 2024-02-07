@@ -18,7 +18,7 @@ config_dir = user_config_dir("wren", "wren")
 messages_log = os.path.join(data_dir, "messages.json")
 
 config = {
-#    "backend": "todoist", # uncomment to override the default backend
+    "backend": "todoist", # uncomment to override the default backend
     "notes_dir": "~/Notes",
     "done_dir": "~/Notes/done",
     "http_user": "",
@@ -73,8 +73,42 @@ def create_new_task(content: str) -> str:
     content = "\n".join(content.split("\n")[1:])
     if "backend" in config:
         if config["backend"] == "todoist":
+            project_id = ""
+            project_mapping = {}
+            section_mapping = {}
+            # Find all projects
+            try:
+                projects = api.get_projects()
+                for index, project in enumerate(projects, start=1):
+                    print(f"{index}: {project.name}")
+                    project_mapping[index] = {"id": project.id, "name": project.name}
+            except Exception as error:
+                print(error)
+            # Prompt user to select a project
+            project_select = input("Select a project: ")
+            selected_project = project_mapping.get(int(project_select))
+            if selected_project:
+                print(f"Selected project: {selected_project['name']}")
+                project_id = selected_project['id']
+                # If the project has sections, prompt for a section
+                try:
+                    sections = api.get_sections(project_id=project_id)
+                    for index, section in enumerate(sections, start=1):
+                        print(f"{index}: {section.name}")
+                        section_mapping[index] = {"id": section.id, "name": section.name}
+                except Exception as error:
+                    print(error)
+                section_select = input("Select a section: ")
+                selected_section = section_mapping.get(int(section_select))
+                print(f"Selected section: {selected_section['name']}")
+                section_id = selected_section['id']
+            else:
+                print("Invalid selection. Please select a valid project.")
+            # Add the task
             try:
                 task = api.add_task(
+                    project_id=project_id,
+                    section_id=section_id,
                     content=taskname,
                     description=content
                 )
