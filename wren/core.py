@@ -7,6 +7,7 @@ from datetime import datetime
 from dateutil import parser
 from platformdirs import user_data_dir, user_config_dir
 from croniter import croniter
+from todoist_api_python.api import TodoistAPI
 
 __version__ = "0.2.1"
 
@@ -17,16 +18,17 @@ config_dir = user_config_dir("wren", "wren")
 messages_log = os.path.join(data_dir, "messages.json")
 
 config = {
+    "backend": "todoist", # uncomment to override the default backend
     "notes_dir": "~/Notes",
     "done_dir": "~/Notes/done",
     "http_user": "",
     "http_password": "",
     "openai_token": "",
     "telegram_token": "",
+    "todoist_token": "",
     "allowed_telegram_chats": [],
     "about_user": "The user chose to specify nothing.",
 }
-
 config_file = os.path.join(config_dir, "wren.json")
 
 try:
@@ -40,49 +42,107 @@ config = {**config, **user_config}
 def parse_path(p, base=""):
     return os.path.join(base, os.path.expanduser(p))
 
-
-notes_dir = parse_path(config["notes_dir"])
-done_dir = parse_path(config["done_dir"], notes_dir)
-
 now = datetime.now()
-
 
 def mkdir(path: str) -> None:
     if not os.path.exists(path):
         os.makedirs(path)
 
-
 mkdir(data_dir)
-mkdir(notes_dir)
-mkdir(done_dir)
 
+
+# Configure Backend
+if "backend" in config:
+    if parse_path(config["backend"]) == "todoist":
+        if config["todoist_token"]:
+            api = TodoistAPI(parse_path(config["todoist_token"]))
+        else:
+            print("Todoist backend requires Todoist API Token")
+            raise SystemExit
+        notes_dir = parse_path(config["notes_dir"])
+else:
+    notes_dir = parse_path(config["notes_dir"])
+    done_dir = parse_path(config["done_dir"], notes_dir)
+    mkdir(done_dir)
+
+mkdir(notes_dir)
 
 # Common API
-
-
 def create_new_task(content: str) -> str:
-    filename = sanitize_filename(content.split("\n")[0].replace("*", "＊"))
+    taskname = sanitize_filename(content.split("\n")[0].replace("*", "＊"))
     content = "\n".join(content.split("\n")[1:])
-    with open(os.path.join(notes_dir, filename), "w") as file:
-        file.write(content)
-    return filename
+    if "backend" in config:
+        if config["backend"] == "todoist":
+            project_id = ""
+            project_mapping = {}
+            section_mapping = {}
+            # Find all projects
+            try:
+                projects = api.get_projects()
+                for index, project in enumerate(projects, start=1):
+                    print(f"{index}: {project.name}")
+                    project_mapping[index] = {"id": project.id, "name": project.name}
+            except Exception as error:
+                print(error)
+            # Prompt user to select a project
+            project_select = input("Select a project: ")
+            selected_project = project_mapping.get(int(project_select))
+            if selected_project:
+                print(f"Selected project: {selected_project['name']}")
+                project_id = selected_project['id']
+                # If the project has sections, prompt for a section
+                try:
+                    sections = api.get_sections(project_id=project_id)
+                    for index, section in enumerate(sections, start=1):
+                        print(f"{index}: {section.name}")
+                        section_mapping[index] = {"id": section.id, "name": section.name}
+                except Exception as error:
+                    print(error)
+                section_select = input("Select a section: ")
+                selected_section = section_mapping.get(int(section_select))
+                print(f"Selected section: {selected_section['name']}")
+                section_id = selected_section['id']
+            else:
+                print("Invalid selection. Please select a valid project.")
+            # Add the task
+            try:
+                task = api.add_task(
+                    project_id=project_id,
+                    section_id=section_id,
+                    content=taskname,
+                    description=content
+                )
+            except Exception as error:
+                print(error)
+    else:
+        with open(os.path.join(notes_dir, taskname), "w") as file:
+            file.write(content)
+    return taskname
 
 
 def get_tasks(query="") -> list[str]:
     global now
     now = datetime.now()
-    return [
-        format_task_name(file)
-        for file in sorted(
-            os.listdir(notes_dir),
-            key=lambda x: os.path.getctime(os.path.join(notes_dir, x)),
-            reverse=True,
-        )
-        if os.path.isfile(os.path.join(notes_dir, file))
-        and not file.startswith(".")
-        and query in file
-        and is_present_task(file)
-    ]
+    if "backend" in config:
+        if config["backend"] == "todoist":
+            try:
+                tasks = api.get_tasks()
+                return tasks
+            except Exception as error:
+                print(error)
+    else:
+        return [
+            format_task_name(file)
+            for file in sorted(
+                os.listdir(notes_dir),
+                key=lambda x: os.path.getctime(os.path.join(notes_dir, x)),
+                reverse=True,
+            )
+            if os.path.isfile(os.path.join(notes_dir, file))
+            and not file.startswith(".")
+            and query in file
+            and is_present_task(file)
+        ]
 
 
 def get_summary() -> str:
@@ -129,51 +189,81 @@ def get_summary() -> str:
 
 
 def get_task_file(name: str) -> tuple[bool, str]:
-    matching_files = [
-        file
-        for file in os.listdir(notes_dir)
-        if name.lower() in file.lower()
-        and os.path.isfile(os.path.join(notes_dir, file))
-    ]
-    if len(matching_files) == 1:
-        return (True, matching_files[0])
-    elif len(matching_files) > 1:
-        return (False, "Error: Multiple matching files found.")
+    if "backend" in config:
+        if config["backend"] == "todoist":
+            matching_tasks = [
+                task
+                for task in api.get_tasks()
+                if name.lower() in task.content.lower()
+            ]
+            if len(matching_tasks) == 1:
+                return (True, matching_tasks[0])
+            elif len(matching_tasks) > 1:
+                return (False, "Error: Multiple matching tasks found.")
+            else:
+                return (False, f"Error: No matching task for '{name}' found.")
     else:
-        return (False, f"Error: No matching file for '{name}' found.")
+        matching_files = [
+            file
+            for file in os.listdir(notes_dir)
+            if name.lower() in file.lower()
+            and os.path.isfile(os.path.join(notes_dir, file))
+        ]
+        if len(matching_files) == 1:
+            return (True, matching_files[0])
+        elif len(matching_files) > 1:
+            return (False, "Error: Multiple matching files found.")
+        else:
+            return (False, f"Error: No matching file for '{name}' found.")
 
 
 def mark_task_done(name: str) -> str:
-    found, filename = get_task_file(name)
-    if found:
-        if is_cron_task(filename):
-            shutil.copy(
-                os.path.join(notes_dir, filename), os.path.join(done_dir, filename)
-            )
-        else:
-            shutil.move(
-                os.path.join(notes_dir, filename), os.path.join(done_dir, filename)
-            )
-        response = f'marked "{filename}" as done'
+    found, taskname = get_task_file(name)
+    if "backend" in config:
+        if config["backend"] == "todoist":
+            if found:
+                api.close_task(task_id=taskname.id)
+                response = f'marked "{taskname.content}" as done'
+            else:
+                response = taskname.content
+            return response
     else:
-        response = filename
-    return response
+        if found:
+            if is_cron_task(taskname):
+                shutil.copy(
+                    os.path.join(notes_dir, taskname), os.path.join(done_dir, taskname)
+                )
+            else:
+                shutil.move(
+                    os.path.join(notes_dir, taskname), os.path.join(done_dir, taskname)
+                )
+            response = f'marked "{taskname}" as done'
+        else:
+            response = taskname
+        return response
 
 
 def get_task_content(name: str) -> str:
-    found, filename = get_task_file(name)
-    if found:
-        file_to_read = os.path.join(notes_dir, filename)
-        with open(file_to_read, "r") as file:
-            file_content = file.read()
-            response = f"{filename}\n\n{file_content}"
+    if "backend" in config:
+        if config["backend"] == "todoist":
+            found, taskname = get_task_file(name)
+            if found:
+                task_id = taskname
+                task = api.get_task(task_id=task_id)
+                return task.description
     else:
-        response = filename
-    return response
+        found, filename = get_task_file(name)
+        if found:
+            file_to_read = os.path.join(notes_dir, filename)
+            with open(file_to_read, "r") as file:
+                file_content = file.read()
+                response = f"{filename}\n\n{file_content}"
+        else:
+            response = filename
+        return response
 
 
 # Helper functions
-
 
 def is_present_task(file: str) -> bool:
     if not file[0].isdigit():
@@ -198,24 +288,24 @@ def is_present_task(file: str) -> bool:
     return False
 
 
-def format_task_name(filename: str) -> str:
-    if is_cron_task(filename):
-        return " ".join(filename.split()[5:])
-    if is_dated_task(filename):
-        return " ".join(filename.split()[1:])
-    return filename
+def format_task_name(taskname: str) -> str:
+    if is_cron_task(taskname):
+        return " ".join(taskname.split()[5:])
+    if is_dated_task(taskname):
+        return " ".join(taskname.split()[1:])
+    return taskname
 
 
-def is_dated_task(filename: str) -> bool:
+def is_dated_task(taskname: str) -> bool:
     try:
-        parser.parse(filename.split()[0])
+        parser.parse(taskname.split()[0])
         return True
     except:
         return False
 
 
-def is_cron_task(filename: str) -> bool:
-    splitted = filename.split()
+def is_cron_task(taskname: str) -> bool:
+    splitted = taskname.split()
     if len(splitted) < 6 or not all(
         (s.isdigit() or s in ["＊", "*"]) for s in splitted[:3]
     ):
