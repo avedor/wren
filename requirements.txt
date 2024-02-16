@@ -14,3 +14,4 @@ six==1.16.0
 telebot==0.0.5
 tzlocal==5.2
 urllib3==2.1.0
+todoist-api-python==2.1.3
